@@ -65,7 +65,7 @@ def replay_longs(df: pd.DataFrame, symbol: str, route: Route, sector: str) -> li
             atr=float(row["atr"]) if pd.notna(row["atr"]) else float(row["close"]) * 0.01,
         )
         setup = evaluate(ctx)
-        if not in_pos and setup.status == "triggered" and setup.entry:
+        if not in_pos and setup.status == "READY_TO_ENTER" and setup.entry:
             in_pos = True
             entry = setup.entry
             stop = setup.stop_loss or entry

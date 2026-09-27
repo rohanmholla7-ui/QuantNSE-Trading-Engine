@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from quantnse.config import get_settings
 from quantnse.ingestion.candles import MTFEngine
 from quantnse.ingestion.rvol import RVOLCalculator
 from quantnse.models import Route, UniverseName, WatchlistItem
@@ -39,6 +38,8 @@ def score_name(
         route=name.route,
         instrument_token=name.instrument_token,
         sector=name.sector,
+        segment=name.segment,
+        last_price=last,
     )
 
 
@@ -49,12 +50,12 @@ def run_funnel(
     prev_close: dict[str, float] | None = None,
     size: int | None = None,
 ) -> list[WatchlistItem]:
-    settings = get_settings()
-    n = size or settings.watchlist_size
     prev_close = prev_close or {}
     ranked = [score_name(u, engine, rvol, prev_close) for u in universe]
     ranked.sort(key=lambda x: x.score, reverse=True)
-    return ranked[:n]
+    if size is not None:
+        return ranked[:size]
+    return ranked
 
 
 def split_routes(watchlist: list[WatchlistItem]) -> tuple[list[WatchlistItem], list[WatchlistItem]]:

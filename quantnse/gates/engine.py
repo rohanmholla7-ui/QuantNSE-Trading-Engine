@@ -5,7 +5,6 @@ from datetime import datetime
 
 from quantnse.config import get_settings
 from quantnse.models import GateName, GateResult, GateStatus, Route, Setup
-from quantnse.risk.costs import round_trip_equity_intraday
 from quantnse.risk.sizing import geometry
 from quantnse.timeutil import now_ist
 
@@ -29,6 +28,7 @@ class GateContext:
     resistance: float | None
     atr: float
     news_breaker: bool = False
+    sector_vs_vwap: float = 0.1
     extra: dict = field(default_factory=dict)
 
 
@@ -162,7 +162,6 @@ def evaluate(ctx: GateContext, ts: datetime | None = None) -> Setup:
         )
         return _setup(ctx, "rejected", gates, ts)
 
-    costs = round_trip_equity_intraday(geo.qty, geo.entry, geo.tp1)
     gates.append(
         _result(
             GateName.RISK_REWARD,
@@ -175,9 +174,98 @@ def evaluate(ctx: GateContext, ts: datetime | None = None) -> Setup:
             qty=geo.qty,
         )
     )
+
+    if ctx.sector_vs_vwap <= 0:
+        gates.append(
+            _result(
+                GateName.SECTOR_RS,
+                GateStatus.FAIL_DISCARD,
+                "Sector index not above sector session VWAP",
+                sector_vs_vwap=ctx.sector_vs_vwap,
+            )
+        )
+        return _setup(ctx, "discarded", gates, ts)
+    gates.append(
+        _result(
+            GateName.SECTOR_RS,
+            GateStatus.PASS,
+            "Sector RS: index > sector VWAP",
+            sector_vs_vwap=ctx.sector_vs_vwap,
+        )
+    )
+
+    if ctx.orb_high is not None and ctx.orb_low is not None and ctx.atr > 0:
+        orb_range = ctx.orb_high - ctx.orb_low
+        if orb_range > settings.orb_atr_mult * ctx.atr:
+            gates.append(
+                _result(
+                    GateName.ORB_EXHAUSTION,
+                    GateStatus.REJECT,
+                    "ORB range exhausted vs ATR14",
+                    orb_range=orb_range,
+                    atr=ctx.atr,
+                )
+            )
+            return _setup(ctx, "rejected", gates, ts)
+    gates.append(
+        _result(
+            GateName.ORB_EXHAUSTION,
+            GateStatus.PASS,
+            "ORB range within 2.5x ATR14",
+            orb_high=ctx.orb_high,
+            orb_low=ctx.orb_low,
+            atr=ctx.atr,
+        )
+    )
+
+    if ctx.imbalance is None or ctx.imbalance < settings.imbalance_strict:
+        gates.append(
+            _result(
+                GateName.DEPTH_IMBALANCE,
+                GateStatus.HOLD_STAGING,
+                "Top-5 bid/ask imbalance < 1.4",
+                imbalance=ctx.imbalance,
+            )
+        )
+        return _setup(ctx, "staging", gates, ts)
+    gates.append(
+        _result(
+            GateName.DEPTH_IMBALANCE,
+            GateStatus.PASS,
+            "Top-5 imbalance >= 1.4",
+            imbalance=ctx.imbalance,
+        )
+    )
+
+    if ctx.vwap <= 0:
+        prox = 1.0
+    else:
+        prox = abs(ctx.price - ctx.vwap) / ctx.vwap
+    if prox > settings.vwap_proximity_max:
+        gates.append(
+            _result(
+                GateName.VWAP_PROXIMITY,
+                GateStatus.REJECT,
+                "Price extended > 0.5% from VWAP",
+                proximity=prox,
+            )
+        )
+        return _setup(ctx, "rejected", gates, ts)
+    gates.append(
+        _result(
+            GateName.VWAP_PROXIMITY,
+            GateStatus.PASS,
+            "VWAP proximity <= 0.5%",
+            proximity=prox,
+        )
+    )
+
+    sim_qty = int(settings.sim_notional // geo.entry) if geo.entry else 0
+    sim_qty = max(sim_qty, 1)
+    friction = sim_qty * geo.entry * settings.sim_friction
     return _setup(
         ctx,
-        "triggered",
+        "READY_TO_ENTER",
         gates,
         ts,
         entry=geo.entry,
@@ -185,8 +273,8 @@ def evaluate(ctx: GateContext, ts: datetime | None = None) -> Setup:
         tp1=geo.tp1,
         tp2=geo.tp2,
         rr=geo.rr,
-        qty=geo.qty,
-        est_cost=costs.total,
+        qty=sim_qty,
+        est_cost=friction,
     )
 
 

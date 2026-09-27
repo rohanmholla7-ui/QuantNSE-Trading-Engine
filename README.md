@@ -1,6 +1,6 @@
 # QuantNSE
 
-Intraday confluence and decision-support engine for NSE (PRD v1.0). Hierarchical gates, Kite Connect ingestion, Indian statutory cost model. **Not investment advice.** Live orders stay off unless `ENABLE_LIVE_ORDERS=true`.
+Intraday confluence engine (v2.0): 19-stock universe, ₹10k simulated PnL tracker, gates 1–9. **Not investment advice.** Live orders stay off unless `ENABLE_LIVE_ORDERS=true`.
 
 ## Stack
 
@@ -32,7 +32,7 @@ If Redis is down, the engine uses an in-process store (single process only).
 1. Create a Kite Connect app and put `KITE_API_KEY` / `KITE_API_SECRET` in `.env`.
 2. `python -m quantnse.cli login` and complete OAuth (`/kite/callback` on the API).
 3. Set `KITE_ACCESS_TOKEN` and `QUANTNSE_MODE=live`.
-4. `python -m quantnse.cli live` — pre-market quotes on the universe, then `mode=full` depth on the 25–30 name watchlist after 09:30.
+4. `python -m quantnse.cli live` — WebSocket ingestion is limited to the 19-name universe.
 
 Retail Kite depth is **top 5 (L2)**, not L3 top-20. CVD uses last trade vs bid/ask; if the tape cannot be classified, Gate 3 **holds staging**.
 

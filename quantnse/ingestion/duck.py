@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import duckdb
 
@@ -8,7 +9,7 @@ from quantnse.config import get_settings
 from quantnse.ingestion.candles import MTFEngine
 
 
-class CandleStore:
+class DuckStore:
     def __init__(self, path: str | None = None) -> None:
         settings = get_settings()
         self.path = Path(path or settings.duckdb_path)
@@ -26,6 +27,24 @@ class CandleStore:
                 close DOUBLE,
                 volume DOUBLE,
                 vwap DOUBLE
+            )
+            """
+        )
+        self.con.execute(
+            """
+            CREATE TABLE IF NOT EXISTS trade_logs (
+                ts TIMESTAMP,
+                symbol TEXT,
+                sector TEXT,
+                entry DOUBLE,
+                target DOUBLE,
+                sl DOUBLE,
+                exit DOUBLE,
+                qty INTEGER,
+                notional DOUBLE,
+                gross_pnl DOUBLE,
+                net_pnl DOUBLE,
+                outcome TEXT
             )
             """
         )
@@ -52,8 +71,33 @@ class CandleStore:
             ],
         )
 
-    def load_5m(self, symbol: str) -> list[dict]:
+    def insert_trade(self, row: dict[str, Any]) -> None:
+        self.con.execute(
+            """
+            INSERT INTO trade_logs
+            (ts, symbol, sector, entry, target, sl, exit, qty, notional, gross_pnl, net_pnl, outcome)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                row["ts"],
+                row["symbol"],
+                row.get("sector"),
+                row["entry"],
+                row["target"],
+                row["sl"],
+                row["exit"],
+                row["qty"],
+                row["notional"],
+                row["gross_pnl"],
+                row["net_pnl"],
+                row["outcome"],
+            ],
+        )
+
+    def trades(self) -> list[dict[str, Any]]:
         return self.con.execute(
-            "SELECT * FROM candles WHERE symbol = ? AND timeframe = '1m' ORDER BY ts",
-            [symbol],
+            "SELECT * FROM trade_logs ORDER BY ts DESC"
         ).fetchdf().to_dict("records")
+
+
+CandleStore = DuckStore

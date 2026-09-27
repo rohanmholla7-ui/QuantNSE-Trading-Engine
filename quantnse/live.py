@@ -47,7 +47,7 @@ def demo_loop(engine: QuantEngine) -> None:
     from quantnse.timeutil import now_ist
 
     engine.set_macro(default_macro())
-    names = engine.universe[: engine.settings.watchlist_size]
+    names = list(engine.universe)
     start = now_ist().replace(hour=9, minute=15, second=0, microsecond=0)
     for i, name in enumerate(names):
         base = 100 + i * 17
@@ -57,6 +57,43 @@ def demo_loop(engine: QuantEngine) -> None:
         engine.attach_chain(demo_chain(name.symbol, last.last_price))
     engine.lock_watchlist()
     engine.evaluate_watchlist()
+    from datetime import timedelta
+
+    from quantnse.risk.tracker import net_from_gross, sim_qty
+
+    now = now_ist()
+    if not engine.tracker.history():
+        samples = [
+            ("HDFCBANK", "NIFTY BANK", 1650.0, "WIN", 0),
+            ("ITC", "NIFTY FMCG", 412.0, "LOSS", 0),
+            ("VEDL", "NIFTY METAL", 448.0, "WIN", 5),
+            ("DIXON", "NIFTY 500", 15200.0, "SQUARED_OFF", 8),
+        ]
+        for i, (sym, sector, entry, outcome, days_ago) in enumerate(samples):
+            qty = sim_qty(entry)
+            if outcome == "WIN":
+                exit_px = entry * 1.016
+            elif outcome == "LOSS":
+                exit_px = entry * 0.992
+            else:
+                exit_px = entry * 1.002
+            gross = qty * (exit_px - entry)
+            engine.tracker.seed(
+                {
+                    "ts": (now - timedelta(days=days_ago)).replace(hour=10, minute=5),
+                    "symbol": sym,
+                    "sector": sector,
+                    "entry": entry,
+                    "target": entry * 1.016,
+                    "sl": entry * 0.992,
+                    "exit": exit_px,
+                    "qty": qty,
+                    "notional": qty * entry,
+                    "gross_pnl": gross,
+                    "net_pnl": net_from_gross(gross, qty, entry),
+                    "outcome": outcome,
+                }
+            )
     try:
         from quantnse.ingestion.duck import CandleStore
 
@@ -72,7 +109,7 @@ def main_live() -> None:
     universe = load_universe()
     symbols = [n.symbol for n in universe]
     mapping = _token_map(kite, symbols)
-    tokens = list(mapping.keys())[: min(len(symbols), 200)]
+    tokens = list(mapping.keys())
     run_kite_ticker(engine, tokens, mapping)
     print("Kite ticker running. Ctrl+C to stop.")
     try:

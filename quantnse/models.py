@@ -18,6 +18,10 @@ class GateName(str, Enum):
     ORDER_FLOW = "gate3_order_flow"
     PRICE_ACTION = "gate4_price_action"
     RISK_REWARD = "gate5_risk_reward"
+    SECTOR_RS = "gate6_sector_rs"
+    ORB_EXHAUSTION = "gate7_orb_exhaustion"
+    DEPTH_IMBALANCE = "gate8_depth_imbalance"
+    VWAP_PROXIMITY = "gate9_vwap_proximity"
 
 
 class GateStatus(str, Enum):
@@ -58,6 +62,7 @@ class UniverseName(BaseModel):
     symbol: str
     name: str = ""
     sector: str = "NIFTY 50"
+    segment: str = ""
     route: Route = Route.CASH
     instrument_token: int = 0
 
@@ -70,6 +75,10 @@ class WatchlistItem(BaseModel):
     route: Route
     instrument_token: int = 0
     sector: str = "NIFTY 50"
+    segment: str = ""
+    last_price: float = 0.0
+    sector_rs: float = 0.0
+    active_gates: list[str] = Field(default_factory=list)
 
 
 class GateResult(BaseModel):
@@ -110,3 +119,4 @@ class MacroSnapshot(BaseModel):
     dii_cash: float | None = None
     bias: str = "neutral"
     news_breaker: bool = False
+    sector_vs_vwap: dict[str, float] = Field(default_factory=dict)

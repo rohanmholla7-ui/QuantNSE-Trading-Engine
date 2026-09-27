@@ -14,8 +14,8 @@ def cmd_demo() -> None:
     engine = get_engine()
     demo_loop(engine)
     print(f"Watchlist: {len(engine.watchlist)}  Setups: {len(engine.setups)}")
-    triggered = [s.symbol for s in engine.setups.values() if s.status == "triggered"]
-    print("Triggered:", ", ".join(triggered) or "(none)")
+    triggered = [s.symbol for s in engine.setups.values() if s.status == "READY_TO_ENTER"]
+    print("READY_TO_ENTER:", ", ".join(triggered) or "(none)")
 
 
 def cmd_api() -> None:

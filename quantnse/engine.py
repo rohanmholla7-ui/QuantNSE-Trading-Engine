@@ -14,14 +14,16 @@ from quantnse.derivatives.chain import (
 from quantnse.gates.engine import GateContext, evaluate
 from quantnse.ingestion.candles import MTFEngine
 from quantnse.ingestion.rvol import RVOLCalculator
+from quantnse.ingestion.duck import DuckStore
 from quantnse.macro.context import compute_lockout, snapshot_from_state
 from quantnse.microstructure.cvd import CVDTracker
 from quantnse.microstructure.imbalance import order_book_imbalance
-from quantnse.models import MacroSnapshot, Route, Setup, Tick, UniverseName, WatchlistItem
+from quantnse.models import MacroSnapshot, Setup, Tick, UniverseName, WatchlistItem
+from quantnse.risk.tracker import PerformanceTracker
 from quantnse.screener.funnel import run_funnel
 from quantnse.store import StateStore
 from quantnse.timeutil import now_ist, past_square_off
-from quantnse.universe import by_symbol, load_universe
+from quantnse.universe import allowed_symbols, by_symbol, load_universe
 
 
 def token_for(symbol: str) -> int:
@@ -45,6 +47,8 @@ class QuantEngine:
         self.square_off_alerts: list[dict[str, Any]] = []
         self.news_breaker = False
         self.funnel_locked = False
+        self.allowed = allowed_symbols()
+        self.tracker = PerformanceTracker(DuckStore(self.settings.duckdb_path))
         for name in self.universe:
             if not name.instrument_token:
                 name.instrument_token = token_for(name.symbol)
@@ -59,10 +63,13 @@ class QuantEngine:
         return snap
 
     def ingest(self, tick: Tick) -> None:
+        if tick.symbol not in self.allowed:
+            return
         self.last_ticks[tick.symbol] = tick
         self.mtf.on_tick(tick)
         self.cvd.on_tick(tick)
         self.store.set_json(f"tick:{tick.symbol}", tick.model_dump())
+        self.tracker.on_price(tick.symbol, tick.last_price, tick.timestamp)
         if past_square_off(tick.timestamp):
             self._square_off(tick.symbol)
 
@@ -111,6 +118,7 @@ class QuantEngine:
         pcr_val = oi_pcr if oi_pcr is not None else vol_pcr
         imb = order_book_imbalance(tick) if tick else None
         known = bool(tick and self.cvd.classified(tick))
+        sector_rs = macro.sector_vs_vwap.get(name.sector, macro.sector_vs_vwap.get("NIFTY 500", 0.1))
         ctx = GateContext(
             symbol=symbol,
             route=name.route,
@@ -129,16 +137,25 @@ class QuantEngine:
             resistance=resistance,
             atr=atr,
             news_breaker=macro.news_breaker,
+            sector_vs_vwap=sector_rs,
         )
         setup = evaluate(ctx, ts=session)
         self.setups[symbol] = setup
+        if setup.status == "READY_TO_ENTER":
+            self.tracker.open_from_setup(setup, name.sector, ts=session)
         return setup
 
     def evaluate_watchlist(self) -> list[Setup]:
         out = [self.evaluate_symbol(s) for s in self.watch_symbols()]
         self.store.set_json("setups", [s.model_dump() for s in out])
-        triggered = [s for s in out if s.status == "triggered"]
+        triggered = [s for s in out if s.status == "READY_TO_ENTER"]
         self.store.set_json("alerts", [s.model_dump() for s in triggered])
+        for item in self.watchlist:
+            setup = self.setups.get(item.symbol)
+            item.last_price = (self.last_ticks.get(item.symbol).last_price if item.symbol in self.last_ticks else item.last_price)
+            item.sector_rs = (self.macro().sector_vs_vwap.get(item.sector, 0.0))
+            item.active_gates = [g.gate.value for g in setup.gates if g.status.value == "pass"] if setup else []
+        self.store.set_json("watchlist", [w.model_dump() for w in self.watchlist])
         return out
 
     def _square_off(self, symbol: str) -> None:
@@ -183,6 +200,8 @@ class QuantEngine:
             "macro": macro.model_dump(),
             "square_off": self.square_off_alerts[-20:],
             "vwap": self.mtf.vwap,
+            "metrics": self.tracker.metrics(),
+            "history": self.tracker.history(),
             "disclaimer": (
                 "QuantNSE is a personal analytical decision-support tool, not investment advice. "
                 "Not a SEBI-registered Research Analyst product. Markets involve risk."
