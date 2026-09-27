@@ -29,7 +29,7 @@ async def lifespan(_: FastAPI):
     yield
 
 
-app = FastAPI(title="QuantNSE", version="1.0.0", lifespan=lifespan)
+app = FastAPI(title="QuantNSE", version="2.0.0", lifespan=lifespan)
 
 
 @app.get("/health")
@@ -53,6 +53,16 @@ def watchlist() -> dict[str, Any]:
 def setups() -> dict[str, Any]:
     eng = get_engine()
     return {"items": [s.model_dump() for s in eng.setups.values()]}
+
+
+@app.get("/metrics")
+def metrics() -> dict[str, Any]:
+    return get_engine().tracker.metrics()
+
+
+@app.get("/history")
+def history() -> dict[str, Any]:
+    return {"items": get_engine().tracker.history()}
 
 
 @app.post("/kill-switch")

@@ -20,7 +20,7 @@ class Settings(BaseSettings):
     redis_url: str = "redis://127.0.0.1:6379/0"
     quantnse_mode: str = "demo"  # demo | live
     enable_live_orders: bool = False
-    watchlist_size: int = 30
+    watchlist_size: int = 19
     duckdb_path: str = "data/quantnse.duckdb"
     enable_yahoo_macro: bool = True
     api_host: str = "127.0.0.1"
@@ -28,6 +28,11 @@ class Settings(BaseSettings):
 
     rvol_min: float = 1.5
     imbalance_min: float = 1.30
+    imbalance_strict: float = 1.4
+    vwap_proximity_max: float = 0.005
+    orb_atr_mult: float = 2.5
+    sim_notional: float = 10_000.0
+    sim_friction: float = 0.0005
     rr_min: float = 2.0
     vix_lockout_pct: float = 4.0
     max_risk_pct: float = 0.008

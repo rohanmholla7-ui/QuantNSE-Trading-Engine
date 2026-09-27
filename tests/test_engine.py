@@ -35,7 +35,7 @@ def _ctx(**kwargs) -> GateContext:
         imbalance=1.4,
         cvd=250.0,
         cvd_known=True,
-        price=1400.0,
+        price=1396.0,
         vwap=1390.0,
         orb_high=1395.0,
         orb_low=1388.0,
@@ -48,14 +48,19 @@ def _ctx(**kwargs) -> GateContext:
 
 def test_universe_dual_route():
     names = load_universe()
-    assert len(names) >= 200
+    assert len(names) == 19
+    assert {n.symbol for n in names} == {
+        "HDFCBANK", "ITC", "HINDALCO", "VEDL", "HINDZINC", "BHARATFORG", "DIXON",
+        "NMDC", "NATIONALUM", "HINDCOPPER", "SCI", "NLCINDIA", "SONACOMS",
+        "ENDURANCE", "KALYANKJIL", "ZENSARTECH", "SONATSOFTW", "NEWGEN", "MAPMYINDIA",
+    }
     assert any(n.route == Route.FNO for n in names)
     assert any(n.route == Route.CASH for n in names)
 
 
 def test_happy_path_triggers():
     setup = evaluate(_ctx())
-    assert setup.status == "triggered"
+    assert setup.status == "READY_TO_ENTER"
     assert setup.rr is not None and setup.rr >= 2.0
     assert setup.stop_loss and setup.tp1 and setup.qty > 0
 
@@ -185,7 +190,7 @@ def test_pcr_and_max_pain():
 def test_funnel_size():
     engine = QuantEngine()
     start = datetime(2026, 8, 28, 9, 15, tzinfo=IST)
-    for name in engine.universe[:40]:
+    for name in engine.universe:
         engine.ingest(
             Tick(
                 instrument_token=name.instrument_token,
@@ -230,6 +235,82 @@ def test_live_orders_default_off():
     assert get_settings().enable_live_orders is False
 
 
+def test_gate6_sector_rs():
+    setup = evaluate(_ctx(sector_vs_vwap=-0.01))
+    assert setup.status == "discarded"
+    assert setup.gates[-1].gate.value == "gate6_sector_rs"
+
+
+def test_gate7_orb_exhaustion():
+    setup = evaluate(_ctx(orb_high=1450.0, orb_low=1388.0, atr=5.0, price=1451.0, vwap=1448.0))
+    assert setup.status == "rejected"
+    assert setup.gates[-1].gate.value == "gate7_orb_exhaustion"
+
+
+def test_gate8_imbalance_strict():
+    setup = evaluate(_ctx(imbalance=1.35))
+    assert setup.status == "staging"
+    assert setup.gates[-1].gate.value == "gate8_depth_imbalance"
+
+
+def test_gate9_vwap_proximity():
+    setup = evaluate(_ctx(price=1420.0, vwap=1390.0, orb_high=1391.0))
+    assert setup.status == "rejected"
+    assert setup.gates[-1].gate.value == "gate9_vwap_proximity"
+
+
+def test_sim_tracker_metrics(tmp_path):
+    from quantnse.ingestion.duck import DuckStore
+    from quantnse.risk.tracker import PerformanceTracker, net_from_gross, sim_qty
+
+    store = DuckStore(str(tmp_path / "t.duckdb"))
+    tr = PerformanceTracker(store)
+    assert store.con.execute("SELECT count(*) FROM trade_logs").fetchone()[0] == 0
+    qty = sim_qty(100.0)
+    assert qty == 100
+    entry, exit_px = 100.0, 102.0
+    gross = qty * (exit_px - entry)
+    ts = datetime(2026, 8, 28, 10, 0, tzinfo=IST)
+    tr.seed(
+        {
+            "ts": ts,
+            "symbol": "ITC",
+            "sector": "NIFTY FMCG",
+            "entry": entry,
+            "target": 101.6,
+            "sl": 99.2,
+            "exit": exit_px,
+            "qty": qty,
+            "notional": 10000.0,
+            "gross_pnl": gross,
+            "net_pnl": net_from_gross(gross, qty, entry),
+            "outcome": "WIN",
+        }
+    )
+    tr.seed(
+        {
+            "ts": ts,
+            "symbol": "SCI",
+            "sector": "NIFTY 500",
+            "entry": 200.0,
+            "target": 203.2,
+            "sl": 198.4,
+            "exit": 198.4,
+            "qty": 50,
+            "notional": 10000.0,
+            "gross_pnl": 50 * (198.4 - 200.0),
+            "net_pnl": net_from_gross(50 * (198.4 - 200.0), 50, 200.0),
+            "outcome": "LOSS",
+        }
+    )
+    m = tr.metrics(now=ts)
+    assert m["today_wins"] == 1
+    assert m["today_losses"] == 1
+    assert m["win_rate_90d"] == pytest.approx(50.0)
+    assert m["profit_factor_90d"] > 0
+    assert tr.history()
+
+
 def test_demo_engine_pipeline():
     from quantnse.demo import default_macro, demo_chain, synthetic_session
 
@@ -244,4 +325,4 @@ def test_demo_engine_pipeline():
     eng.lock_watchlist([w for w in run_funnel(eng.universe[:5], eng.mtf, eng.rvol, size=1)])
     setup = eng.evaluate_symbol(name.symbol, ts=start.replace(hour=10, minute=0))
     assert setup.symbol == name.symbol
-    assert setup.status in {"triggered", "staging", "no_trigger", "rejected", "discarded"}
+    assert setup.status in {"READY_TO_ENTER", "staging", "no_trigger", "rejected", "discarded"}
